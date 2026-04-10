@@ -1,65 +1,183 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { FormEvent, useMemo, useState } from "react";
+
+type Song = {
+  id?: string | number;
+  title?: string;
+  artist?: string;
+  coverImage?: string;
+  cover_url?: string;
+  cover?: string;
+};
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
+
+function getCoverImage(song: Song): string {
+  return song.coverImage || song.cover_url || song.cover || "";
+}
+
+function getSongTitle(song: Song): string {
+  return song.title || "Unknown Title";
+}
+
+function getSongArtist(song: Song): string {
+  return song.artist || "Unknown Artist";
+}
+
+export default function Page() {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<Song[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [isDownloadingId, setIsDownloadingId] = useState<string>("");
+  const [error, setError] = useState("");
+
+  const canSearch = useMemo(() => query.trim().length > 0 && !!API_URL, [query]);
+
+  async function onSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+
+    if (!API_URL) {
+      setError("API URL is missing. Set NEXT_PUBLIC_API_URL.");
+      return;
+    }
+
+    const trimmedQuery = query.trim();
+    if (!trimmedQuery) {
+      setResults([]);
+      return;
+    }
+
+    setIsSearching(true);
+
+    try {
+      const response = await fetch(`${API_URL}/search?q=${encodeURIComponent(trimmedQuery)}`);
+      if (!response.ok) {
+        throw new Error(`Search failed with status ${response.status}`);
+      }
+
+      const data = await response.json();
+      const list: Song[] = Array.isArray(data) ? data : Array.isArray(data?.results) ? data.results : [];
+      setResults(list);
+    } catch (searchError) {
+      setError(searchError instanceof Error ? searchError.message : "Search failed");
+      setResults([]);
+    } finally {
+      setIsSearching(false);
+    }
+  }
+
+  async function onGenerateClip(song: Song, index: number) {
+    setError("");
+
+    if (!API_URL) {
+      setError("API URL is missing. Set NEXT_PUBLIC_API_URL.");
+      return;
+    }
+
+    const songKey = String(song.id ?? index);
+    setIsDownloadingId(songKey);
+
+    try {
+      const response = await fetch(`${API_URL}/clip`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ lyrics: query.trim() }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Clip generation failed with status ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const safeTitle = getSongTitle(song).replace(/[^a-zA-Z0-9_-]/g, "_");
+      const safeArtist = getSongArtist(song).replace(/[^a-zA-Z0-9_-]/g, "_");
+      link.href = url;
+      link.download = `${safeArtist}-${safeTitle}.ogg`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (clipError) {
+      setError(clipError instanceof Error ? clipError.message : "Clip generation failed");
+    } finally {
+      setIsDownloadingId("");
+    }
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+    <main className="min-h-screen bg-stone-100 text-stone-900">
+      <div className="mx-auto max-w-4xl px-6 py-10">
+        <h1 className="mb-6 text-2xl font-semibold tracking-tight">Sing Sing Search</h1>
+
+        <form onSubmit={onSearch} className="space-y-3 rounded-xl border border-stone-300 bg-white p-4 shadow-sm">
+          <label htmlFor="lyrics" className="block text-sm font-medium text-stone-700">
+            Lyrics Input
+          </label>
+          <textarea
+            id="lyrics"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Type song lyrics here"
+            className="h-36 w-full resize-y rounded-md border border-stone-300 bg-stone-50 px-3 py-2 text-sm outline-none transition focus:border-stone-500"
+          />
+          <div className="flex items-center gap-3">
+            <button
+              type="submit"
+              disabled={!canSearch || isSearching}
+              className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-stone-50 transition hover:bg-stone-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+              {isSearching ? "Searching" : "Search"}
+            </button>
+            {!API_URL && <span className="text-xs text-stone-600">Set NEXT_PUBLIC_API_URL to enable search.</span>}
+          </div>
+        </form>
+
+        {error && (
+          <p className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {error}
           </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+        )}
+
+        <section className="mt-6 grid gap-4 sm:grid-cols-2">
+          {results.map((song, index) => {
+            const cover = getCoverImage(song);
+            const songKey = String(song.id ?? index);
+            const downloading = isDownloadingId === songKey;
+
+            return (
+              <article key={songKey} className="overflow-hidden rounded-xl border border-stone-300 bg-white shadow-sm">
+                <div className="aspect-square bg-stone-200">
+                  {cover ? (
+                    <img src={cover} alt={`${getSongTitle(song)} cover`} className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-xs text-stone-500">No Cover</div>
+                  )}
+                </div>
+                <div className="space-y-3 p-4">
+                  <div>
+                    <h2 className="line-clamp-1 text-base font-semibold">{getSongTitle(song)}</h2>
+                    <p className="line-clamp-1 text-sm text-stone-600">{getSongArtist(song)}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onGenerateClip(song, index)}
+                    disabled={downloading}
+                    className="w-full rounded-md border border-stone-400 px-3 py-2 text-sm font-medium text-stone-800 transition hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {downloading ? "Generating Clip" : "Generate Clip"}
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </section>
+      </div>
+    </main>
   );
 }
